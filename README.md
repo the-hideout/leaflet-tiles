@@ -17,3 +17,4 @@ You can also create a `.env` file which specifies any of the following variables
 - `MAX_ZOOM`: The maximum zoom level for which to generate tiles (zero-indexed)
 - `MIN_ZOOM`: The minimum zoom level for which to generate tiles (zero-indexed)
 - `TILE_SIZE`: The size of tiles, defaults to an optimal value at runtime, can be chosen at runtime, and falls back to 256
+- `THREAD_LIMIT`: The number of worker threads to use. If not supplied, defaults to `os.availableParallelism()`

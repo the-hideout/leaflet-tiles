@@ -4,7 +4,7 @@
   "description": "Generate leaflet tiles from an input image",
   "main": "index.mjs",
   "scripts": {
-    "start": "node index.mjs",
+    "start": "node -max-old-space-size=16384 index.mjs",
     "test": "echo \"Error: no test specified\" && exit 1",
     "format": "prettier --write index.mjs",
     "format-check": "prettier --check index.mjs",
@@ -26,11 +26,10 @@
   },
   "homepage": "https://github.com/the-hideout/leaflet-tiles#readme",
   "dependencies": {
-    "dotenv": "16.3.1",
-    "luxon": "^3.4.3",
-    "ora": "^6.3.1",
-    "prompt-sync": "^4.2.0",
-    "sharp": "0.32.6"
+    "dotenv": "16.4.7",
+    "luxon": "^3.5.0",
+    "ora": "^8.1.1",
+    "sharp": "0.33.5"
   },
   "devDependencies": {
     "eslint": "^7.32.0",
