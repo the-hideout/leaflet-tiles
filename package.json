@@ -27,8 +27,8 @@
   "homepage": "https://github.com/the-hideout/leaflet-tiles#readme",
   "dependencies": {
     "dotenv": "16.4.7",
-    "luxon": "^3.5.0",
-    "ora": "^8.1.1",
+    "luxon": "^3.6.0",
+    "ora": "^8.2.0",
     "sharp": "0.33.5"
   },
   "devDependencies": {
