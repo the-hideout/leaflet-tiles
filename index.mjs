@@ -261,7 +261,7 @@ async function createTiles(options) {
         }
     }
 
-    let fullSize = Math.max(metadata.width, metadata.height);
+    const fullSize = Math.max(metadata.width, metadata.height);
 
     if (resize) {
         const resizeSpinner = ora();
@@ -312,7 +312,6 @@ async function createTiles(options) {
             resizeSpinner.suffixText = '';
         }
         resizeSpinner.succeed();
-        fullSize = resize;
     }
 
     await fs.mkdir(`output/${mapName}`).catch(error => {
