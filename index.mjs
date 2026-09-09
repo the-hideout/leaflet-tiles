@@ -1,18 +1,21 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { availableParallelism } from 'os';
+import {availableParallelism} from 'os';
 import readline from 'readline';
 
 import sharp from 'sharp';
 import ora from 'ora';
 import dotenv from 'dotenv';
-import { DateTime } from 'luxon';
+import {DateTime} from 'luxon';
 
-import WorkerPromise, { activeWorkerCount, workerEvents } from './worker-promise.mjs';
+import WorkerPromise, {
+    activeWorkerCount,
+    workerEvents
+} from './worker-promise.mjs';
 
 dotenv.config();
 const prompt = (textPrompt, defaultValue) => {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
         const input = readline.createInterface({
             input: process.stdin,
             output: process.stdout
@@ -34,12 +37,14 @@ if (!imagePath) {
 }
 const minTileSize = process.env.MIN_TILE_SIZE || 100;
 const maxTileSize = process.env.MAX_TILE_SIZE || 400;
-const threadLimit = isNaN(process.env.THREAD_LIMIT) ? availableParallelism() : parseInt(process.env.THREAD_LIMIT);
+const threadLimit = isNaN(process.env.THREAD_LIMIT)
+    ? availableParallelism()
+    : parseInt(process.env.THREAD_LIMIT);
 const testOutput = Boolean(process.env.TEST_OUTPUT || false);
 
 async function getTileSettings() {
     const tileSettings = {
-        imagePath,
+        imagePath
     };
 
     if ((await fs.lstat(imagePath)).isDirectory()) {
@@ -54,7 +59,9 @@ async function getTileSettings() {
                 )
             );
         if (files.length < 1) {
-            return Promise.reject(new Error(`The folder ${imagePath} does not contain any images`));
+            return Promise.reject(
+                new Error(`The folder ${imagePath} does not contain any images`)
+            );
         }
         console.log('Select input image:');
         for (let i = 0; i < files.length; i++) {
@@ -62,9 +69,14 @@ async function getTileSettings() {
         }
         const index = await prompt(`[1-${files.length}]: `);
         if (isNaN(index) || index < 1 || index > files.length) {
-            return Promise.reject(new Error(`${index} is an invalid input image selection`));
+            return Promise.reject(
+                new Error(`${index} is an invalid input image selection`)
+            );
         }
-        tileSettings.imagePath = path.join(imagePath, files[parseInt(index - 1)]);
+        tileSettings.imagePath = path.join(
+            imagePath,
+            files[parseInt(index - 1)]
+        );
     }
 
     tileSettings.mapName =
@@ -73,22 +85,30 @@ async function getTileSettings() {
             tileSettings.imagePath.lastIndexOf(path.sep) + 1,
             tileSettings.imagePath.lastIndexOf('.')
         );
-    const newMapName = await prompt(`Output folder (${tileSettings.mapName}): `, tileSettings.mapName);
+    const newMapName = await prompt(
+        `Output folder (${tileSettings.mapName}): `,
+        tileSettings.mapName
+    );
     tileSettings.mapName = newMapName.replace(' ', '_');
 
     let inputImage = sharp(tileSettings.imagePath, {
         unlimited: true,
         limitInputPixels: false
     }).png();
-    
+
     let metadata = await inputImage.metadata();
     console.log(`Image size: ${metadata.width}x${metadata.height}`);
 
-    tileSettings.rotation = await prompt('Rotate image 90, 180, or 270 degrees (0): ', 0);
+    tileSettings.rotation = await prompt(
+        'Rotate image 90, 180, or 270 degrees (0): ',
+        0
+    );
     if (tileSettings.rotation) {
         tileSettings.rotation = tileSettings.rotation.trim();
         if (!['0', '90', '180', '270'].includes(tileSettings.rotation)) {
-            return Promise.reject(new Error(`${tileSettings.rotation} is not a valid rotation`));
+            return Promise.reject(
+                new Error(`${tileSettings.rotation} is not a valid rotation`)
+            );
         }
         tileSettings.rotation = parseInt(tileSettings.rotation);
     }
@@ -170,7 +190,9 @@ async function getTileSettings() {
     }
     const newTileSize = await prompt(`Tile size (${tileSize}): `, tileSize);
     if (isNaN(newTileSize)) {
-        return Promise.reject(new Error(`${newTileSize} is not a valid tile size`));
+        return Promise.reject(
+            new Error(`${newTileSize} is not a valid tile size`)
+        );
     }
     if (parseInt(newTileSize) !== tileConfig.size) {
         tileConfig.size = parseInt(newTileSize);
@@ -210,15 +232,8 @@ async function getTileSettings() {
 }
 
 async function createTiles(options) {
-    const {
-        imagePath,
-        rotation,
-        resize,
-        tileSize,
-        minZoom,
-        maxZoom,
-        mapName,
-    } = options;
+    const {imagePath, rotation, resize, tileSize, minZoom, maxZoom, mapName} =
+        options;
     let inputImage = sharp(imagePath, {
         unlimited: true,
         limitInputPixels: false
@@ -340,7 +355,9 @@ async function createTiles(options) {
     for (let z = minZoom; z <= maxZoom; z++) {
         const scaledSize = tileSize * Math.pow(2, z);
         zoomSpinner.suffixText = `| z ${z}/${maxZoom} Resizing to ${scaledSize}`;
-        const workerResult = await new WorkerPromise('resize-worker.mjs').start({tileSize, z, image: inputImageBuffer});
+        const workerResult = await new WorkerPromise('resize-worker.mjs').start(
+            {tileSize, z, image: inputImageBuffer}
+        );
         await fs.mkdir(`output/${mapName}/${z}`).catch(error => {
             if (error.code !== 'EEXIST') {
                 console.log(error);
@@ -353,31 +370,32 @@ async function createTiles(options) {
                 }
             });
             for (let y = 0; y < scaledSize / tileSize; y++) {
-                new WorkerPromise('tile-worker.mjs').start({
-                    mapName,
-                    tileSize,
-                    x,
-                    y,
-                    z,
-                    image: workerResult.image,
-                }).then(() => {
-                    zoomSpinner.suffixText = `| z ${z}/${maxZoom} | x ${x}/${
-                        scaledSize / tileSize - 1
-                    } | y ${y}/${scaledSize / tileSize - 1}`;
-                    completedTiles++;
-                    zoomSpinner.prefixText = `${(
-                        Math.round(
-                            (completedTiles / totalTiles) * 10000
-                        ) / 100
-                    ).toFixed(2)}%`;
-                });
+                new WorkerPromise('tile-worker.mjs')
+                    .start({
+                        mapName,
+                        tileSize,
+                        x,
+                        y,
+                        z,
+                        image: workerResult.image
+                    })
+                    .then(() => {
+                        zoomSpinner.suffixText = `| z ${z}/${maxZoom} | x ${x}/${
+                            scaledSize / tileSize - 1
+                        } | y ${y}/${scaledSize / tileSize - 1}`;
+                        completedTiles++;
+                        zoomSpinner.prefixText = `${(
+                            Math.round((completedTiles / totalTiles) * 10000) /
+                            100
+                        ).toFixed(2)}%`;
+                    });
                 await tileCheck();
             }
         }
         zoomSpinner.suffixText = '';
         zoomSpinner.prefixText = '';
     }
-    zoomSpinner.suffixText = `completed ${DateTime.now().toRelative({ base: startTime})}`;
+    zoomSpinner.suffixText = `completed ${DateTime.now().toRelative({base: startTime})}`;
     zoomSpinner.succeed();
 }
 
@@ -396,14 +414,20 @@ async function createTiles(options) {
             console.log(error.message);
         }
         if (tileSettings.length > 0) {
-            console.log(`Queued tiles: ${tileSettings.map(setting => setting.mapName).join(', ')}`);
+            console.log(
+                `Queued tiles: ${tileSettings.map(setting => setting.mapName).join(', ')}`
+            );
         }
-        const again = (await prompt(`Do you want to queue another tileset? (n): `, 'n'))?.trim().toLocaleLowerCase();
+        const again = (
+            await prompt(`Do you want to queue another tileset? (n): `, 'n')
+        )
+            ?.trim()
+            .toLocaleLowerCase();
         if (!again?.startsWith('y')) {
             break;
         }
     }
-    
+
     for (const settings of tileSettings) {
         try {
             await createTiles(settings);
