@@ -26,13 +26,13 @@
   },
   "homepage": "https://github.com/the-hideout/leaflet-tiles#readme",
   "dependencies": {
-    "dotenv": "16.4.7",
-    "luxon": "^3.6.0",
-    "ora": "^8.2.0",
-    "sharp": "0.33.5"
+    "dotenv": "17.4.2",
+    "luxon": "^3.7.2",
+    "ora": "^9.4.1",
+    "sharp": "0.35.3"
   },
   "devDependencies": {
-    "eslint": "^9.39.1",
-    "prettier": "2.5.1"
+    "eslint": "^10.8.0",
+    "prettier": "3.9.6"
   }
 }
