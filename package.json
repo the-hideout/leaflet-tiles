@@ -32,7 +32,7 @@
     "sharp": "^0.35.4"
   },
   "devDependencies": {
-    "eslint": "^10.8.0",
+    "eslint": "^10.8.1",
     "@eslint/js": "^10.0.1",
     "@eslint/eslintrc": "3.3.7",
     "globals": "^17.12.0",
