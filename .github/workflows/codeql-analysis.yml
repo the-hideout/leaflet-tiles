@@ -26,7 +26,7 @@ jobs:
 
     steps:
     - name: checkout
-      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # pin@v3
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # pin@v3
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
@@ -35,7 +35,7 @@ jobs:
         languages: ${{ matrix.language }}
 
     - name: Autobuild
-      uses: github/codeql-action/autobuild@b8d3b6e8af63cde30bdc382c0bc28114f4346c88 # pin@v2
+      uses: github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # pin@v4.37.3
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # pin@v4.37.3
