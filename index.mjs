@@ -1,19 +1,14 @@
+// must be first: loads .env and sizes the libuv threadpool before sharp loads
+import {threadLimit} from './setup-env.mjs';
+
 import fs from 'fs/promises';
 import path from 'path';
-import {availableParallelism} from 'os';
 import readline from 'readline';
 
 import sharp from 'sharp';
 import ora from 'ora';
-import dotenv from 'dotenv';
 import {DateTime} from 'luxon';
 
-import WorkerPromise, {
-    activeWorkerCount,
-    workerEvents
-} from './worker-promise.mjs';
-
-dotenv.config();
 const prompt = (textPrompt, defaultValue) => {
     return new Promise(resolve => {
         const input = readline.createInterface({
@@ -37,9 +32,6 @@ if (!imagePath) {
 }
 const minTileSize = process.env.MIN_TILE_SIZE || 100;
 const maxTileSize = process.env.MAX_TILE_SIZE || 400;
-const threadLimit = isNaN(process.env.THREAD_LIMIT)
-    ? availableParallelism()
-    : parseInt(process.env.THREAD_LIMIT);
 const testOutput = Boolean(process.env.TEST_OUTPUT || false);
 
 async function getTileSettings() {
@@ -231,37 +223,54 @@ async function getTileSettings() {
     return tileSettings;
 }
 
-async function createTiles(options) {
-    const {imagePath, rotation, resize, tileSize, minZoom, maxZoom, mapName} =
-        options;
-    let inputImage = sharp(imagePath, {
-        unlimited: true,
-        limitInputPixels: false
-    }).png();
+const sharpOptions = {unlimited: true, limitInputPixels: false};
 
-    let metadata = await inputImage.metadata();
+// Decode a pipeline to raw pixels so later steps don't pay for PNG
+// encode/decode round-trips.
+const toRaw = pipeline => pipeline.raw().toBuffer({resolveWithObject: true});
+
+const fromRaw = ({data, info}) =>
+    sharp(data, {
+        ...sharpOptions,
+        raw: {width: info.width, height: info.height, channels: info.channels}
+    });
+
+const mkdir = dir => fs.mkdir(dir, {recursive: true});
+
+// Run async tasks with at most `limit` in flight.
+async function runLimited(count, limit, task) {
+    let next = 0;
+    const runners = Array.from({length: Math.min(limit, count)}, async () => {
+        while (next < count) {
+            await task(next++);
+        }
+    });
+    await Promise.all(runners);
+}
+
+async function createTiles(options) {
+    const {imagePath, rotation, resize, tileSize, mapName} = options;
+    const minZoom = parseInt(options.minZoom);
+    const maxZoom = parseInt(options.maxZoom);
+    const defaultConcurrency = sharp.concurrency();
+
+    const loadSpinner = ora('Decoding source image').start();
+    let source = await toRaw(sharp(imagePath, sharpOptions));
+    loadSpinner.succeed();
 
     if (rotation) {
         const rotateSpinner = ora(`Rotating image ${rotation} degrees`);
         rotateSpinner.start();
-        inputImage = sharp(await inputImage.rotate(rotation).toBuffer(), {
-            unlimited: true,
-            limitInputPixels: false
-        });
+        source = await toRaw(fromRaw(source).rotate(rotation));
         if (testOutput) {
             rotateSpinner.suffixText = 'saving test output...';
-            await inputImage.toFile('./output/test_rotated.jpg');
+            await fromRaw(source).toFile('./output/test_rotated.jpg');
             rotateSpinner.suffixText = '';
         }
         rotateSpinner.succeed();
-        if (rotation === 90 || rotation === 270) {
-            const h = metadata.height;
-            metadata.height = metadata.width;
-            metadata.width = h;
-        }
     }
 
-    const fullSize = Math.max(metadata.width, metadata.height);
+    const fullSize = Math.max(source.info.width, source.info.height);
 
     if (resize) {
         const resizeSpinner = ora();
@@ -269,56 +278,40 @@ async function createTiles(options) {
             resizeSpinner.start(
                 `Shrinking source image to fit ${resize}x${resize}`
             );
-            inputImage = sharp(
-                await inputImage
-                    .resize({
-                        width: resize,
-                        height: resize,
-                        fit: sharp.fit.contain,
-                        position: sharp.gravity.northwest,
-                        background: {r: 1, g: 0, b: 0, alpha: 0}
-                    })
-                    .toBuffer()
+            source = await toRaw(
+                fromRaw(source).resize({
+                    width: resize,
+                    height: resize,
+                    fit: sharp.fit.contain,
+                    position: sharp.gravity.northwest,
+                    background: {r: 1, g: 0, b: 0, alpha: 0}
+                })
             );
         } else {
             resizeSpinner.start(
                 `Padding source image to fit ${resize}x${resize}`
             );
-            const xPadding = resize - metadata.width;
-            const yPadding = resize - metadata.height;
-            const top = Math.ceil(yPadding / 2);
-            const bottom = Math.floor(yPadding / 2);
-            const left = Math.ceil(xPadding / 2);
-            const right = Math.floor(xPadding / 2);
-            inputImage = sharp(
-                await inputImage
-                    .extend({
-                        top,
-                        right,
-                        bottom,
-                        left,
-                        background: {r: 1, g: 0, b: 0, alpha: 0}
-                    })
-                    .toBuffer(),
-                {
-                    unlimited: true,
-                    limitInputPixels: false
-                }
+            const xPadding = resize - source.info.width;
+            const yPadding = resize - source.info.height;
+            source = await toRaw(
+                fromRaw(source).extend({
+                    top: Math.ceil(yPadding / 2),
+                    right: Math.floor(xPadding / 2),
+                    bottom: Math.floor(yPadding / 2),
+                    left: Math.ceil(xPadding / 2),
+                    background: {r: 1, g: 0, b: 0, alpha: 0}
+                })
             );
         }
         if (testOutput) {
             resizeSpinner.suffixText = 'saving test output...';
-            await inputImage.toFile('./output/test_resized.jpg');
+            await fromRaw(source).toFile('./output/test_resized.jpg');
             resizeSpinner.suffixText = '';
         }
         resizeSpinner.succeed();
     }
 
-    await fs.mkdir(`output/${mapName}`).catch(error => {
-        if (error.code !== 'EEXIST') {
-            console.log(error);
-        }
-    });
+    await mkdir(`output/${mapName}`);
 
     await fs.writeFile(
         `output/${mapName}/config.json`,
@@ -335,65 +328,80 @@ async function createTiles(options) {
 
     let totalTiles = 0;
     for (let z = minZoom; z <= maxZoom; z++) {
-        totalTiles += Math.pow((tileSize * Math.pow(2, z)) / tileSize, 2);
+        totalTiles += Math.pow(4, z);
     }
 
-    const tileCheck = async () => {
-        if (activeWorkerCount() >= threadLimit) {
-            return new Promise(resolve => {
-                workerEvents.once('workerEnded', resolve);
-            });
-        }
-        return Promise.resolve();
-    };
     let completedTiles = 0;
     const zoomSpinner = ora({text: mapName, prefixText: '0.00%'});
     zoomSpinner.start();
     const startTime = DateTime.now();
-    const inputImageBuffer = (await inputImage.toBuffer()).buffer;
-    for (let z = minZoom; z <= maxZoom; z++) {
-        const scaledSize = tileSize * Math.pow(2, z);
-        zoomSpinner.suffixText = `| z ${z}/${maxZoom} Resizing to ${scaledSize}`;
-        const workerResult = await new WorkerPromise('resize-worker.mjs').start(
-            {tileSize, z, image: inputImageBuffer}
-        );
-        await fs.mkdir(`output/${mapName}/${z}`).catch(error => {
-            if (error.code !== 'EEXIST') {
-                console.log(error);
-            }
-        });
-        for (let x = 0; x < scaledSize / tileSize; x++) {
-            await fs.mkdir(`output/${mapName}/${z}/${x}`).catch(error => {
-                if (error.code !== 'EEXIST') {
-                    console.log(error);
-                }
-            });
-            for (let y = 0; y < scaledSize / tileSize; y++) {
-                new WorkerPromise('tile-worker.mjs')
-                    .start({
-                        mapName,
-                        tileSize,
-                        x,
-                        y,
-                        z,
-                        image: workerResult.image
+    try {
+        for (let z = minZoom; z <= maxZoom; z++) {
+            const scaledSize = tileSize * Math.pow(2, z);
+            const tilesPerSide = scaledSize / tileSize;
+            zoomSpinner.suffixText = `| z ${z}/${maxZoom} Resizing to ${scaledSize}`;
+
+            // One large resize per zoom level, using every libvips thread.
+            sharp.concurrency(defaultConcurrency);
+            let level = source;
+            if (
+                scaledSize !== source.info.width ||
+                scaledSize !== source.info.height
+            ) {
+                level = await toRaw(
+                    fromRaw(source).resize({
+                        width: scaledSize,
+                        height: scaledSize,
+                        fit: sharp.fit.contain,
+                        background: {r: 1, g: 0, b: 0, alpha: 0}
                     })
-                    .then(() => {
-                        zoomSpinner.suffixText = `| z ${z}/${maxZoom} | x ${x}/${
-                            scaledSize / tileSize - 1
-                        } | y ${y}/${scaledSize / tileSize - 1}`;
-                        completedTiles++;
-                        zoomSpinner.prefixText = `${(
-                            Math.round((completedTiles / totalTiles) * 10000) /
-                            100
-                        ).toFixed(2)}%`;
-                    });
-                await tileCheck();
+                );
             }
+
+            for (let x = 0; x < tilesPerSide; x++) {
+                await mkdir(`output/${mapName}/${z}/${x}`);
+            }
+
+            // Many small tile encodes in parallel: parallelism comes from the
+            // libuv threadpool, so one libvips thread per tile avoids
+            // oversubscribing the CPU.
+            sharp.concurrency(1);
+            await runLimited(
+                tilesPerSide * tilesPerSide,
+                threadLimit,
+                async index => {
+                    const x = Math.floor(index / tilesPerSide);
+                    const y = index % tilesPerSide;
+                    let tile = fromRaw(level);
+                    if (tilesPerSide > 1) {
+                        tile = tile.extract({
+                            left: x * tileSize,
+                            top: y * tileSize,
+                            width: tileSize,
+                            height: tileSize
+                        });
+                    }
+                    await tile
+                        .png()
+                        .toFile(`output/${mapName}/${z}/${x}/${y}.png`);
+                    completedTiles++;
+                    zoomSpinner.suffixText = `| z ${z}/${maxZoom} | x ${x}/${
+                        tilesPerSide - 1
+                    } | y ${y}/${tilesPerSide - 1}`;
+                    zoomSpinner.prefixText = `${(
+                        (completedTiles / totalTiles) *
+                        100
+                    ).toFixed(2)}%`;
+                }
+            );
         }
-        zoomSpinner.suffixText = '';
-        zoomSpinner.prefixText = '';
+    } catch (error) {
+        zoomSpinner.fail();
+        throw error;
+    } finally {
+        sharp.concurrency(defaultConcurrency);
     }
+    zoomSpinner.prefixText = '';
     zoomSpinner.suffixText = `completed ${DateTime.now().toRelative({base: startTime})}`;
     zoomSpinner.succeed();
 }
